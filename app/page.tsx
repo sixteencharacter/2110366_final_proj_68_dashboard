@@ -1,4 +1,5 @@
 "use client"
+import "@/lib/services/MQTTConsumerService"
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,13 +7,43 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Activity, Volume2, VolumeX, Radio, Scan, CheckCircle2, XCircle, HelpCircle, ArrowLeft } from 'lucide-react';
-import { useMQTTData } from '@/lib/hooks/useMQTTData';
+import { useConsumerStore } from "@/store/consumerStore";
+import { useMQTTData } from "@/lib/hooks/useMQTTData";
+import {motion} from "motion/react";
 
 const LieDetectorGame = () => {
 
-  const {gameState , heartBeat , gameResult , analysisProgress , isTalking} = useMQTTData({host : process.env.MQTT_ENDPOINT});
+  // replace with store
+  const {isInited} = useMQTTData();
+  const [gameState, setGameState] = useState<string>('idle');
+  const [heartBeat , setHeartBeat] = useState<number>(0.0);
+  const [gameResult , setGameResult] = useState<{result : string , confidence : number}>({
+    result : 'Inconclusive',
+    confidence : 95
+  });
+  const [isTalking , setIsTalking] = useState<boolean>(false);
   const [immersiveMode, setImmersiveMode] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  useEffect(() => {
+    if(isInited) {
+      // Subscribe to Zustand OUTSIDE the render cycle
+      const unsubscribe = useConsumerStore.subscribe(
+        (state , prev) => {
+          if(prev != state) {
+            if(state.gameState != prev.gameState) {
+              setGameState(state.gameState)
+            }
+            setHeartBeat(state.heartBeat)
+            setGameResult(state.gameResult)
+            setIsTalking(state.isTalking)
+          }
+        }
+      );
+
+      return () => unsubscribe();
+    }
+  }, [isInited]);
 
   const getResultColor = () => {
     if (!gameResult) return 'bg-zinc-500';
@@ -98,25 +129,7 @@ const LieDetectorGame = () => {
       </div>
     );
 
-    const ImmersiveAnalyzingView = () => (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-purple-950 via-zinc-900 to-zinc-950 text-white p-8">
-        <Scan className="w-40 h-40 text-purple-500 mb-8 animate-spin" style={{ animationDuration: '3s' }} />
-        <h1 className="text-6xl font-bold mb-4">ANALYZING</h1>
-        <p className="text-xl text-zinc-400 mb-8">Processing Biometric Data</p>
-        
-        <div className="w-full max-w-2xl mb-12">
-          <div className="relative h-4 bg-zinc-800 rounded-full overflow-hidden">
-            <div 
-              className="absolute top-0 left-0 h-full bg-gradient-to-r from-purple-600 to-blue-500 transition-all duration-300"
-              style={{width: `${analysisProgress}%`}}
-            />
-          </div>
-          <div className="flex justify-between mt-4 text-2xl font-bold">
-            <span>PROGRESS</span>
-            <span className="text-purple-400">{analysisProgress}%</span>
-          </div>
-        </div>
-
+    const DynamicAnalyzingText = ({heartRate} : {heartRate : number}) => (
         <div className="grid grid-cols-2 gap-6 w-full max-w-4xl">
           <div className="text-center p-6 bg-zinc-800/50 rounded-lg border border-purple-700/50">
             <div className="text-sm text-zinc-400 mb-2">VOICE PATTERN</div>
@@ -124,9 +137,17 @@ const LieDetectorGame = () => {
           </div>
           <div className="text-center p-6 bg-zinc-800/50 rounded-lg border border-purple-700/50">
             <div className="text-sm text-zinc-400 mb-2">HEART RATE</div>
-            <div className="text-3xl font-bold text-purple-400">{heartBeat} BPM</div>
+            <div className="text-3xl font-bold text-purple-400">{heartRate} BPM</div>
           </div>
         </div>
+    )
+
+    const ImmersiveAnalyzingView = () => (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-purple-950 via-zinc-900 to-zinc-950 text-white p-8">
+        <Scan className="w-40 h-40 text-purple-500 mb-8 animate-pulse"/>
+        <h1 className="text-6xl font-bold mb-4">ANALYZING</h1>
+        <p className="text-xl text-zinc-400 mb-8">Processing Biometric Data</p>
+        <DynamicAnalyzingText heartRate={heartBeat}/>
       </div>
     );
 
@@ -162,7 +183,7 @@ const LieDetectorGame = () => {
               <div className="text-6xl font-bold mb-2">{heartBeat}</div>
               <div className="text-sm text-zinc-400">BPM</div>
             </div>
-            <div className="text-center p-8 bg-zinc-800/50 rounded-lg border border-zinc-700">
+            <div className="text-center p-8 bg-zinc-800/50 rounded-lg border border-zinc-700 flex justify-center items-center flex-col">
               <div className="text-sm text-zinc-400 mb-2">VERDICT</div>
               <div className={`text-4xl font-bold ${iconColors[gameResult?.result || 'Truth']}`}>
                 {gameResult?.result === 'Truth' ? '✓ PASS' : 
@@ -178,9 +199,7 @@ const LieDetectorGame = () => {
           }`}>
             <Activity className="h-5 w-5" />
             <AlertDescription className="ml-2 text-lg">
-              <span className="font-bold">Analysis Complete:</span> Based on voice pattern analysis, 
-              heart rate variability, and micro-expression detection, the system has determined a{' '}
-              <span className="font-bold">{gameResult?.result}</span> with {gameResult?.confidence}% confidence.
+              <span className="font-bold">Analysis Complete:</span> Based on heart rate variabilitythe system has determined a{' '}{gameResult?.result} with {gameResult?.confidence}% confidence.
             </AlertDescription>
           </Alert>
         </div>
@@ -217,7 +236,7 @@ const LieDetectorGame = () => {
 
         {gameState === 'idle' && <ImmersiveIdleView />}
         {gameState === 'recording' && <ImmersiveQuestioningView />}
-        {gameState === 'processing' && <ImmersiveAnalyzingView />}
+        {gameState === 'processing' && <ImmersiveAnalyzingView/>}
         {gameState === 'result' && <ImmersiveResultView />}
       </>
     );
@@ -332,16 +351,6 @@ const LieDetectorGame = () => {
                 </CardContent>
               </Card>
             </div>
-
-            {gameState === 'processing' && (
-              <div className="mt-6">
-                <div className="flex justify-between mb-2">
-                  <span className="text-sm font-medium">Analyzing Response...</span>
-                  <span className="text-sm font-medium">{analysisProgress}%</span>
-                </div>
-                <Progress value={analysisProgress} className="h-2" />
-              </div>
-            )}
           </CardContent>
         </Card>
 
